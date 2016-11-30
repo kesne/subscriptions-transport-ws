@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import * as websocket from 'websocket';
 const W3CWebSocket = (websocket as { [key: string]: any })['w3cwebsocket'];
 import * as Backoff from 'backo2';
@@ -35,15 +36,10 @@ export interface ClientOptions {
   timeout?: number;
   reconnect?: boolean;
   reconnectionAttempts?: number;
-  // TODO: Implement these:
   keepAliveTimeout?: number;
-  onDisconnect?: () => void;
-  onConnect?: () => void;
 }
 
 const DEFAULT_SUBSCRIPTION_TIMEOUT = 5000;
-const DEFAULT_ON_DISCONNECT = () => {};
-const DEFAULT_ON_CONNECT = () => {};
 
 export default class Client {
 
@@ -60,9 +56,8 @@ export default class Client {
   private reconnectSubscriptions: Subscriptions;
   private keepAliveTimeout: number;
   private keepAliveTimeoutRef: any;
-  private onDisconnect: () => void;
-  private onConnect: () => void;
   private backoff: any;
+  private ee: EventEmitter;
 
   constructor(url: string, options?: ClientOptions) {
     const {
@@ -70,8 +65,6 @@ export default class Client {
       reconnect = false,
       reconnectionAttempts = Infinity,
       keepAliveTimeout = 0,
-      onDisconnect = DEFAULT_ON_DISCONNECT,
-      onConnect = DEFAULT_ON_CONNECT,
     } = (options || {});
 
     this.url = url;
@@ -85,9 +78,8 @@ export default class Client {
     this.reconnecting = false;
     this.reconnectionAttempts = reconnectionAttempts;
     this.keepAliveTimeout = keepAliveTimeout;
-    this.onDisconnect = onDisconnect;
-    this.onConnect = onConnect;
     this.backoff = new Backoff({ jitter: 0.5 });
+    this.ee = new EventEmitter();
     this.connect();
   }
 
@@ -136,6 +128,18 @@ export default class Client {
     Object.keys(this.subscriptions).forEach( subId => {
       this.unsubscribe(parseInt(subId));
     });
+  }
+
+  public on(triggerName: string, handler: Function) {
+    this.ee.addListener(triggerName, handler);
+  }
+
+  public off(triggerName: string, handler: Function) {
+    this.ee.removeListener(triggerName, handler);
+  }
+
+  private emit(triggerName: string, payload?: any) {
+    this.ee.emit(triggerName, payload);
   }
 
   // send message, or queue it if connection is not open
@@ -197,11 +201,13 @@ export default class Client {
   }
 
   private resetKeepAliveTimeout() {
-    if (this.keepAliveTimeoutRef) clearTimeout(this.keepAliveTimeoutRef);
-    this.keepAliveTimeoutRef = setTimeout(() => {
-      this.onDisconnect();
-      this.tryReconnect();
-    }, this.keepAliveTimeout);
+    if (this.keepAliveTimeout > 0) {
+      if (this.keepAliveTimeoutRef) clearTimeout(this.keepAliveTimeoutRef);
+      this.keepAliveTimeoutRef = setTimeout(() => {
+        // Force-close the client because we haven't heard from the server in a while:
+        this.client.close();
+      }, this.keepAliveTimeout);
+    }
   }
 
   private connect() {
@@ -209,7 +215,7 @@ export default class Client {
 
     this.client.onopen = () => {
       this.reconnecting = false;
-      this.onConnect();
+      this.emit('connect');
       this.resetKeepAliveTimeout();
       this.backoff.reset();
       Object.keys(this.reconnectSubscriptions).forEach((key) => {
@@ -223,7 +229,7 @@ export default class Client {
     };
 
     this.client.onclose = () => {
-      this.onDisconnect();
+      this.emit('disconnect');
       this.tryReconnect();
     };
 

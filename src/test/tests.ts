@@ -184,7 +184,37 @@ describe('Client', function() {
     }
   });
 
-  it('removes subscription when it unsubscribes from it', function() {
+  it('emits a connect event when it connects to the server', function(done) {
+    const client = new Client(`ws://localhost:${TEST_PORT}`);
+
+    const timeout = setTimeout( () => {
+      throw new Error('Connect was never called');
+    }, 100);
+
+    client.on('connect', () => {
+      clearTimeout(timeout);
+      done();
+    });
+  });
+
+  it('emits a disconnect event when it disconnects from the server', function(done) {
+    const client = new Client(`ws://localhost:${TEST_PORT}`);
+
+    const timeout = setTimeout( () => {
+      throw new Error('Disconnect was never called');
+    }, 200);
+
+    client.on('connect', () => {
+      client.client.close();
+    });
+
+    client.on('disconnect', () => {
+      clearTimeout(timeout);
+      done();
+    });
+  });
+
+  it('removes subscription when it unsubscribes from it', function(done) {
     const client = new Client(`ws://localhost:${TEST_PORT}/`);
 
     setTimeout( () => {
@@ -206,10 +236,11 @@ describe('Client', function() {
       );
       client.unsubscribe(subId);
       assert.notProperty(client.subscriptions, `${subId}`);
+      done();
     }, 100);
   });
 
-  it('queues messages while websocket is still connecting', function() {
+  it('queues messages while websocket is still connecting', function(done) {
     const client = new Client(`ws://localhost:${TEST_PORT}/`);
 
     let subId = client.subscribe({
@@ -233,6 +264,7 @@ describe('Client', function() {
     expect((client as any).unsentMessagesQueue.length).to.equals(2);
     setTimeout(() => {
       expect((client as any).unsentMessagesQueue.length).to.equals(0);
+      done();
     }, 100);
   });
 
@@ -240,7 +272,7 @@ describe('Client', function() {
     const client = new Client(`ws://localhost:${TEST_PORT}/`);
 
     setTimeout( () => {
-    client.subscribe({
+      client.subscribe({
         query:
         `subscription useInfo{
           error
