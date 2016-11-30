@@ -214,6 +214,33 @@ describe('Client', function() {
     });
   });
 
+  it('emits a connect after being reconnected to the server', function(done) {
+    const client = new Client(`ws://localhost:${TEST_PORT}`, {
+      reconnect: true,
+    });
+
+    const timeout = setTimeout( () => {
+      throw new Error('Disconnect was never called');
+    }, 200);
+
+    function firstConnectHandler() {
+      client.off('connect', firstConnectHandler);
+      client.client.close();
+    }
+
+    let callCount = 0;
+    function reconnectHandler() {
+      callCount++;
+      if (callCount === 2) {
+        clearTimeout(timeout);
+        done();
+      }
+    }
+
+    client.on('connect', firstConnectHandler);
+    client.on('connect', reconnectHandler);
+  });
+
   it('removes subscription when it unsubscribes from it', function(done) {
     const client = new Client(`ws://localhost:${TEST_PORT}/`);
 
