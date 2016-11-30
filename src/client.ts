@@ -35,9 +35,15 @@ export interface ClientOptions {
   timeout?: number;
   reconnect?: boolean;
   reconnectionAttempts?: number;
+  // TODO: Implement these:
+  keepAliveTimeout?: number;
+  onDisconnect?: () => void;
+  onConnect?: () => void;
 }
 
 const DEFAULT_SUBSCRIPTION_TIMEOUT = 5000;
+const DEFAULT_ON_DISCONNECT = () => {};
+const DEFAULT_ON_CONNECT = () => {};
 
 export default class Client {
 
@@ -52,6 +58,10 @@ export default class Client {
   private reconnecting: boolean;
   private reconnectionAttempts: number;
   private reconnectSubscriptions: Subscriptions;
+  private keepAliveTimeout: number;
+  private keepAliveTimeoutRef: any;
+  private onDisconnect: () => void;
+  private onConnect: () => void;
   private backoff: any;
 
   constructor(url: string, options?: ClientOptions) {
@@ -59,6 +69,9 @@ export default class Client {
       timeout = DEFAULT_SUBSCRIPTION_TIMEOUT,
       reconnect = false,
       reconnectionAttempts = Infinity,
+      keepAliveTimeout = 0,
+      onDisconnect = DEFAULT_ON_DISCONNECT,
+      onConnect = DEFAULT_ON_CONNECT,
     } = (options || {});
 
     this.url = url;
@@ -71,6 +84,9 @@ export default class Client {
     this.reconnectSubscriptions = {};
     this.reconnecting = false;
     this.reconnectionAttempts = reconnectionAttempts;
+    this.keepAliveTimeout = keepAliveTimeout;
+    this.onDisconnect = onDisconnect;
+    this.onConnect = onConnect;
     this.backoff = new Backoff({ jitter: 0.5 });
     this.connect();
   }
@@ -180,11 +196,21 @@ export default class Client {
     }, delay);
   }
 
+  private resetKeepAliveTimeout() {
+    if (this.keepAliveTimeoutRef) clearTimeout(this.keepAliveTimeoutRef);
+    this.keepAliveTimeoutRef = setTimeout(() => {
+      this.onDisconnect();
+      this.tryReconnect();
+    }, this.keepAliveTimeout);
+  }
+
   private connect() {
     this.client = new W3CWebSocket(this.url, GRAPHQL_SUBSCRIPTIONS);
 
     this.client.onopen = () => {
       this.reconnecting = false;
+      this.onConnect();
+      this.resetKeepAliveTimeout();
       this.backoff.reset();
       Object.keys(this.reconnectSubscriptions).forEach((key) => {
         const { options, handler } = this.reconnectSubscriptions[key];
@@ -197,6 +223,7 @@ export default class Client {
     };
 
     this.client.onclose = () => {
+      this.onDisconnect();
       this.tryReconnect();
     };
 
@@ -235,6 +262,7 @@ export default class Client {
           break;
 
         case SUBSCRIPTION_KEEPALIVE:
+          this.resetKeepAliveTimeout();
           break;
 
         default:
